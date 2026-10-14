@@ -4,6 +4,7 @@ rofd_document_get_metadata
 rofd_document_get_outline
 rofd_document_get_page
 rofd_document_get_page_count
+rofd_document_get_page_size_mm
 rofd_document_get_warnings
 rofd_document_open
 rofd_error_free
