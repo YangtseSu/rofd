@@ -11,6 +11,11 @@ export DH_VERBOSE = 1
 export CARGO_HOME = $(CURDIR)/debian/.cargo-home
 export CARGO_NET_OFFLINE = true
 
+# pkg-config metadata reports the Debian version (the release identifier), not
+# the Cargo crate version: the crate version lags the release train, and
+# consumers compare against it (e.g. dependency('rofd-ffi', version: '>= 0.4.2')).
+ROFD_FFI_VERSION = $(shell dpkg-parsechangelog -SVersion)
+
 %:
 	dh $@
 
@@ -28,6 +33,11 @@ override_dh_auto_install:
 		debian/librofd-ffi0/usr/lib/$(DEB_HOST_MULTIARCH)/librofd_ffi.so.0.4.0
 	install -D -m0644 crates/rofd-ffi/include/rofd.h \
 		debian/librofd-ffi-dev/usr/include/rofd.h
+	install -d debian/librofd-ffi-dev/usr/lib/$(DEB_HOST_MULTIARCH)/pkgconfig
+	sed -e 's/@VERSION@/$(ROFD_FFI_VERSION)/' \
+	    -e 's/@MULTIARCH@/$(DEB_HOST_MULTIARCH)/' \
+	    debian/rofd-ffi.pc.in \
+	    > debian/librofd-ffi-dev/usr/lib/$(DEB_HOST_MULTIARCH)/pkgconfig/rofd-ffi.pc
 	dh_link -plibrofd-ffi0 \
 		usr/lib/$(DEB_HOST_MULTIARCH)/librofd_ffi.so.0.4.0 \
 		usr/lib/$(DEB_HOST_MULTIARCH)/librofd_ffi.so.0
