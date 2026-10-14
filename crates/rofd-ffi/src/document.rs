@@ -132,6 +132,43 @@ pub unsafe extern "C" fn rofd_document_get_page_count(
     }
 }
 
+/// Copies the physical page box of a zero-based index as millimetres.
+///
+/// This metadata-only query reads the page area without parsing or caching page
+/// content: it performs no content validation, collects no content warnings, and
+/// also succeeds for a page whose content cannot be loaded. The value matches
+/// [`rofd_page_get_size_mm`] for the same index.
+///
+/// # Safety
+///
+/// A non-null `document` must be a live document handle returned by this library.
+/// Its storage must remain valid, must not be concurrently freed or modified, and
+/// must not overlap the writable, aligned `page_size_mm` or `error` output slots.
+/// Non-null output slots must also be mutually disjoint and valid for the call.
+#[no_mangle]
+pub unsafe extern "C" fn rofd_document_get_page_size_mm(
+    document: *const rofd_document_t,
+    page_index: usize,
+    page_size_mm: *mut rofd_rect_t,
+    error: *mut *mut rofd_error_t,
+) -> rofd_status_t {
+    // SAFETY: The shared boundary validates and transactionally writes the caller output slots.
+    unsafe {
+        boundary(error, ScalarOutput::required(page_size_mm), || {
+            let size = document_ref(document)?
+                .inner
+                .page_size(page_index)
+                .map_err(FfiError::from)?;
+            Ok(rofd_rect_t {
+                x_mm: size.x,
+                y_mm: size.y,
+                width_mm: size.width,
+                height_mm: size.height,
+            })
+        })
+    }
+}
+
 /// Returns an independently owned page handle for a zero-based index.
 ///
 /// The returned page retains its document data and remains valid after the
