@@ -1,0 +1,13 @@
+prefix=/usr
+exec_prefix=${prefix}
+includedir=${prefix}/include
+libdir=${prefix}/lib/@MULTIARCH@
+
+Name: rofd-ffi
+Description: Stable C ABI for the rofd OFD reader and renderer
+URL: https://github.com/linuxdeepin/rofd
+Version: @VERSION@
+# rofd.h includes <cairo.h>, so consumers need cairo's headers and library
+Requires: cairo
+Cflags: -I${includedir}
+Libs: -L${libdir} -lrofd_ffi
