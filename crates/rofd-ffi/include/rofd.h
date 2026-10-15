@@ -340,6 +340,17 @@ rofd_status_t rofd_document_open(const char *path,
 rofd_status_t rofd_document_get_page_count(const rofd_document_t *document,
                                            size_t *page_count,
                                            rofd_error_t **error);
+/** Borrow a live document and copy one page's physical box in millimetres. This
+ * metadata-only query reads the page area without parsing or caching page content,
+ * so it performs no content validation, collects no content warnings, and also
+ * succeeds when that page's content cannot be loaded. The value matches
+ * rofd_page_get_size_mm for the same index. document, page_size_mm and error follow
+ * the rules above; an index outside [0, page_count) returns
+ * ROFD_STATUS_PAGE_OUT_OF_RANGE. */
+rofd_status_t rofd_document_get_page_size_mm(const rofd_document_t *document,
+                                             size_t page_index,
+                                             rofd_rect_t *page_size_mm,
+                                             rofd_error_t **error);
 /** Borrow a live document and return an independently owned page. The document
  * storage must be disjoint from page and error and remain live for the call. */
 rofd_status_t rofd_document_get_page(const rofd_document_t *document,

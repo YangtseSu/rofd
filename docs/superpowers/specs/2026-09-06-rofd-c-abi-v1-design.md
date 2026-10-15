@@ -172,6 +172,11 @@ rofd_status_t rofd_document_get_page_count(
     const rofd_document_t *document,
     size_t *page_count,
     rofd_error_t **error);
+rofd_status_t rofd_document_get_page_size_mm(
+    const rofd_document_t *document,
+    size_t page_index,
+    rofd_rect_t *page_size_mm,
+    rofd_error_t **error);
 rofd_status_t rofd_document_get_page(
     const rofd_document_t *document,
     size_t index,

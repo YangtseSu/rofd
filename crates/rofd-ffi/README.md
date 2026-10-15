@@ -91,6 +91,13 @@ can therefore be empty even when a later snapshot contains a page-area fallback
 warning. Existing snapshots remain unchanged. These are parsing warnings;
 rendering diagnostics remain available through the rendering report API.
 
+`rofd_document_get_page_size_mm` copies one page's physical box in millimetres
+without loading page content. It reads the page area only, so it performs no
+content validation, collects no content warnings, and also succeeds for a page
+whose content cannot be loaded. The value matches `rofd_page_get_size_mm` for the
+same index; querying every page this way costs far less than opening each page with
+`rofd_document_get_page`.
+
 ```c
 rofd_metadata_t *metadata = NULL;
 rofd_warning_list_t *warnings = NULL;

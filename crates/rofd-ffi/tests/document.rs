@@ -1,15 +1,19 @@
 use std::ffi::{CStr, CString};
+use std::io::{Cursor, Write};
 use std::mem::size_of;
 use std::path::PathBuf;
 use std::ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rofd_ffi::{
-    rofd_document_free, rofd_document_get_page, rofd_document_get_page_count, rofd_document_open,
-    rofd_document_t, rofd_error_free, rofd_error_get_message, rofd_error_get_status, rofd_error_t,
-    rofd_load_options_init, rofd_load_options_t, rofd_page_free, rofd_page_get_index,
-    rofd_page_get_size_mm, rofd_page_t, rofd_rect_t, ROFD_STATUS_INVALID_ARGUMENT, ROFD_STATUS_IO,
+    rofd_document_free, rofd_document_get_page, rofd_document_get_page_count,
+    rofd_document_get_page_size_mm, rofd_document_open, rofd_document_t, rofd_error_free,
+    rofd_error_get_message, rofd_error_get_status, rofd_error_t, rofd_load_options_init,
+    rofd_load_options_t, rofd_page_free, rofd_page_get_index, rofd_page_get_size_mm, rofd_page_t,
+    rofd_rect_t, ROFD_STATUS_INVALID_ARGUMENT, ROFD_STATUS_INVALID_DOCUMENT, ROFD_STATUS_IO,
     ROFD_STATUS_OK, ROFD_STATUS_PAGE_OUT_OF_RANGE, ROFD_STRICTNESS_LENIENT, ROFD_STRICTNESS_STRICT,
 };
+use zip::{write::SimpleFileOptions, ZipWriter};
 
 fn fixture_path() -> CString {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../learning/test.ofd");
@@ -329,6 +333,260 @@ fn null_handles_and_out_of_range_pages_leave_outputs_at_entry_defaults() {
     );
     unsafe {
         free_error(&mut error);
+        rofd_document_free(document);
+    }
+}
+
+/// Builds a two-page document whose second page declares a valid physical box but
+/// references a font resource that does not exist, so only its metadata is readable.
+fn open_two_page_fixture() -> *mut rofd_document_t {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    for (path, xml) in [
+        (
+            "OFD.xml",
+            "<OFD><DocBody><DocInfo/><DocRoot>Document.xml</DocRoot></DocBody></OFD>",
+        ),
+        (
+            "Document.xml",
+            r#"<Document><CommonData><PageArea><PhysicalBox>0 0 210 297</PhysicalBox></PageArea><MaxUnitID>5</MaxUnitID></CommonData><Pages><Page ID="2" BaseLoc="Page_0.xml"/><Page ID="3" BaseLoc="Page_1.xml"/></Pages></Document>"#,
+        ),
+        (
+            "Page_0.xml",
+            r#"<Page><Area><PhysicalBox>0 0 210 297</PhysicalBox></Area></Page>"#,
+        ),
+        (
+            "Page_1.xml",
+            r#"<Page><Area><PhysicalBox>10 20 100 50</PhysicalBox></Area><Content><Layer ID="4"><TextObject ID="5" Boundary="0 0 20 10" Font="999" Size="4"><TextCode X="0" Y="4">x</TextCode></TextObject></Layer></Content></Page>"#,
+        ),
+    ] {
+        zip.start_file(path, SimpleFileOptions::default()).unwrap();
+        zip.write_all(xml.as_bytes()).unwrap();
+    }
+
+    let path = std::env::temp_dir().join(format!(
+        "rofd-document-page-size-{}-{}.ofd",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&path, zip.finish().unwrap().into_inner()).unwrap();
+    let path_c = CString::new(path.to_str().unwrap()).unwrap();
+    let mut document = ptr::null_mut();
+    // SAFETY: The path and the handle output are live and disjoint; the caller frees the handle.
+    unsafe {
+        assert_eq!(
+            rofd_document_open(path_c.as_ptr(), ptr::null(), &mut document, ptr::null_mut()),
+            ROFD_STATUS_OK
+        );
+    }
+    std::fs::remove_file(path).unwrap();
+    document
+}
+
+#[test]
+fn document_page_size_matches_the_page_handle_for_the_same_index() {
+    // SAFETY: Both handles stay live and each output slot is distinct for its call.
+    unsafe {
+        let (document, mut error) = open_fixture();
+        let mut document_size = rofd_rect_t {
+            x_mm: -1.0,
+            y_mm: -1.0,
+            width_mm: -1.0,
+            height_mm: -1.0,
+        };
+        assert_eq!(
+            rofd_document_get_page_size_mm(document, 0, &mut document_size, &mut error),
+            ROFD_STATUS_OK
+        );
+        assert!(error.is_null());
+        assert_eq!(
+            (
+                document_size.x_mm,
+                document_size.y_mm,
+                document_size.width_mm,
+                document_size.height_mm,
+            ),
+            (0.0, 0.0, 211.5, 140.0)
+        );
+
+        let mut page = ptr::null_mut();
+        assert_eq!(
+            rofd_document_get_page(document, 0, &mut page, &mut error),
+            ROFD_STATUS_OK
+        );
+        let mut page_size = rofd_rect_t {
+            x_mm: -1.0,
+            y_mm: -1.0,
+            width_mm: -1.0,
+            height_mm: -1.0,
+        };
+        assert_eq!(
+            rofd_page_get_size_mm(page, &mut page_size, &mut error),
+            ROFD_STATUS_OK
+        );
+        assert!(error.is_null());
+        assert_eq!(
+            (
+                document_size.x_mm,
+                document_size.y_mm,
+                document_size.width_mm,
+                document_size.height_mm,
+            ),
+            (
+                page_size.x_mm,
+                page_size.y_mm,
+                page_size.width_mm,
+                page_size.height_mm,
+            )
+        );
+
+        rofd_page_free(page);
+        rofd_document_free(document);
+    }
+}
+
+#[test]
+fn document_page_size_is_metadata_only_for_pages_with_unloadable_content() {
+    // SAFETY: The handle stays live; every output slot is distinct for its call.
+    unsafe {
+        let document = open_two_page_fixture();
+        let mut error = ptr::null_mut();
+
+        let mut first_size = rofd_rect_t {
+            x_mm: -1.0,
+            y_mm: -1.0,
+            width_mm: -1.0,
+            height_mm: -1.0,
+        };
+        assert_eq!(
+            rofd_document_get_page_size_mm(document, 0, &mut first_size, &mut error),
+            ROFD_STATUS_OK
+        );
+        assert_eq!(
+            (
+                first_size.x_mm,
+                first_size.y_mm,
+                first_size.width_mm,
+                first_size.height_mm,
+            ),
+            (0.0, 0.0, 210.0, 297.0)
+        );
+
+        let mut second_size = rofd_rect_t {
+            x_mm: -1.0,
+            y_mm: -1.0,
+            width_mm: -1.0,
+            height_mm: -1.0,
+        };
+        assert_eq!(
+            rofd_document_get_page_size_mm(document, 1, &mut second_size, &mut error),
+            ROFD_STATUS_OK
+        );
+        assert!(error.is_null());
+        assert_eq!(
+            (
+                second_size.x_mm,
+                second_size.y_mm,
+                second_size.width_mm,
+                second_size.height_mm,
+            ),
+            (10.0, 20.0, 100.0, 50.0)
+        );
+
+        let mut page = ptr::NonNull::<rofd_page_t>::dangling().as_ptr();
+        assert_eq!(
+            rofd_document_get_page(document, 1, &mut page, &mut error),
+            ROFD_STATUS_INVALID_DOCUMENT
+        );
+        assert!(page.is_null());
+        assert_error(error, ROFD_STATUS_INVALID_DOCUMENT);
+        free_error(&mut error);
+
+        rofd_document_free(document);
+    }
+}
+
+#[test]
+fn document_page_size_rejects_invalid_arguments_indices_and_aliased_outputs() {
+    // SAFETY: The handle stays live; malformed layouts are rejected before any write.
+    unsafe {
+        let (document, mut error) = open_fixture();
+
+        let mut size = rofd_rect_t {
+            x_mm: 1.0,
+            y_mm: 2.0,
+            width_mm: 3.0,
+            height_mm: 4.0,
+        };
+        assert_eq!(
+            rofd_document_get_page_size_mm(ptr::null(), 0, &mut size, &mut error),
+            ROFD_STATUS_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            (size.x_mm, size.y_mm, size.width_mm, size.height_mm),
+            (0.0, 0.0, 0.0, 0.0)
+        );
+        free_error(&mut error);
+
+        let size = rofd_rect_t {
+            x_mm: 1.0,
+            y_mm: 2.0,
+            width_mm: 3.0,
+            height_mm: 4.0,
+        };
+        assert_eq!(
+            rofd_document_get_page_size_mm(document, 0, ptr::null_mut(), &mut error),
+            ROFD_STATUS_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            (size.x_mm, size.y_mm, size.width_mm, size.height_mm),
+            (1.0, 2.0, 3.0, 4.0)
+        );
+        free_error(&mut error);
+
+        let mut size = rofd_rect_t {
+            x_mm: 1.0,
+            y_mm: 2.0,
+            width_mm: 3.0,
+            height_mm: 4.0,
+        };
+        assert_eq!(
+            rofd_document_get_page_size_mm(document, 7, &mut size, &mut error),
+            ROFD_STATUS_PAGE_OUT_OF_RANGE
+        );
+        assert_eq!(
+            (size.x_mm, size.y_mm, size.width_mm, size.height_mm),
+            (0.0, 0.0, 0.0, 0.0)
+        );
+        free_error(&mut error);
+
+        let mut aliased = rofd_rect_t {
+            x_mm: 1.0,
+            y_mm: 2.0,
+            width_mm: 3.0,
+            height_mm: 4.0,
+        };
+        let aliased_output = ptr::addr_of_mut!(aliased);
+        assert_eq!(
+            rofd_document_get_page_size_mm(
+                document,
+                0,
+                aliased_output,
+                aliased_output.cast::<*mut rofd_error_t>(),
+            ),
+            ROFD_STATUS_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            (
+                aliased.x_mm,
+                aliased.y_mm,
+                aliased.width_mm,
+                aliased.height_mm
+            ),
+            (1.0, 2.0, 3.0, 4.0)
+        );
+
         rofd_document_free(document);
     }
 }
