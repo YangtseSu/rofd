@@ -1,0 +1,126 @@
+# SPDX-FileCopyrightText: 2026 Yangtse Su <yangtsesu@gmail.com>
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Fork-only CI: the upstream repository's Distribution Builder has every job
+# gated behind `if: false` (so nothing is ever built or checked there), and its
+# CLA/BUILD gates need a linuxdeepin member. This workflow runs the checks a
+# release branch must pass — the ones `debian/rules` builds, the crate test
+# suite, rustfmt, clippy and the C ABI runner.
+#
+# It lives on `dev` only. A push to `dev` runs it in **strict** mode: every
+# test gates, because `dev` is what ships, so it must be green on its own base.
+# A `feat/*` or `fix/*` branch is based on upstream `main`, where two tests are
+# red; those branches carry no copy of this file, so they are checked through
+# `workflow_dispatch` with an explicit `refs` list, in **loose** mode: the two
+# upstream-red tests run as visible, non-gating steps so a branch's own
+# regressions still fail the run, and the branch keeps a diff against upstream
+# that contains nothing but the change under review.
+name: fork checks
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+    inputs:
+      refs:
+        description: 'Space-separated refs to check (default: this branch, then every feat/*, fix/* and dev)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  refs:
+    name: collect refs
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: List the branches to check
+        id: list
+        env:
+          DISPATCHED_REFS: ${{ github.event.inputs.refs }}
+          PUSHED_REF: ${{ github.ref }}
+        run: |
+          set -eu
+          refs="$DISPATCHED_REFS"
+          if [ -z "$refs" ] && [ "$GITHUB_EVENT_NAME" = push ]; then
+            refs="$PUSHED_REF"
+          fi
+          if [ -z "$refs" ]; then
+            refs=$(git ls-remote --heads origin |
+                     awk '$2 ~ /^refs\/heads\/(feat|fix)\// || $2 == "refs/heads/dev" { print $2 }' |
+                     sort)
+          fi
+          # `dev` is what ships, so a ref that names it is checked strictly:
+          # nothing may be skipped or tolerated there.
+          matrix=$(printf '%s\n' $refs |
+                     sed 's|^refs/heads/||' |
+                     jq -R -s -c 'split("\n") | map(select(length > 0))
+                       | map({ref: ., strict: . == "dev"})')
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+          printf 'checking %s\n' "$matrix"
+
+  checks:
+    name: ${{ matrix.entry.ref }}
+    needs: refs
+    if: needs.refs.outputs.matrix != '[]'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.refs.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.entry.ref }}
+          fetch-depth: 0
+      - name: Install the build dependencies (debian/control)
+        run: |
+          sudo apt-get update
+          # fonts-noto-cjk and fonts-noto-core are not build dependencies: the crate
+          # tests lower the repository's real invoice fixture, whose text names
+          # SimSun/KaiTi/Courier New and whose resolver falls back to `Noto Sans CJK SC`
+          # and `Noto Sans Mono`, so without them the run reports MissingGlyph
+          # diagnostics and `rofd-render --test real_fixture` fails.
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libcairo2-dev libfreetype-dev libjbig2dec0-dev \
+            qt6-base-dev qt6-declarative-dev \
+            fonts-noto-cjk fonts-noto-core
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --offline -p rofd-core -p rofd-render -p rofd-ffi --all-targets -- -D warnings
+      - name: crate tests
+        run: |
+          # `dev` carries the fixes that make both of these green, so nothing is
+          # skipped there. On `feat/*` / `fix/*`, which sit on upstream `main`
+          # where #14 and #15 are unmerged, they run in their own visible,
+          # non-gating steps below instead, so the branch's own regressions still
+          # gate. Drop the loose half once #14 and #15 are upstream.
+          if [ '${{ matrix.entry.strict }}' = true ]; then
+            cargo test --offline -p rofd-core -p rofd-render -p rofd-ffi
+          else
+            cargo test --offline -p rofd-core -p rofd-render -p rofd-ffi \
+              -- --skip real_fixture_region_matches_full_page_and_preserves_cairo_ownership \
+                 --skip decoded_limits_have_exact_and_one_over_boundaries
+          fi
+      - name: 'upstream-red: decoded image limit boundary (fixed by PR #14)'
+        if: ${{ !matrix.entry.strict }}
+        continue-on-error: true
+        run: |
+          cargo test --offline -p rofd-render --test images \
+            decoded_limits_have_exact_and_one_over_boundaries
+      - name: 'upstream-red: region pixel diff on this font stack (fixed by PR #15)'
+        if: ${{ !matrix.entry.strict }}
+        continue-on-error: true
+        run: |
+          cargo test --offline -p rofd-ffi --test region \
+            real_fixture_region_matches_full_page_and_preserves_cairo_ownership
+      - name: distribution build (what debian/rules runs)
+        run: cargo build --release --offline --locked -p rofd-ffi -p rofd --features rofd/qt-reader
+      - name: C ABI symbols, header and smoke tests
+        run: sh crates/rofd-ffi/tests/run_c_tests.sh
