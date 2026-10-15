@@ -195,12 +195,18 @@ fn real_fixture_region_matches_full_page_and_preserves_cairo_ownership() {
             }
         }
     }
-    // Cairo can change curve edge coverage with target extents even with an
-    // identical matrix. This fixed invoice has 21 differing channels, delta <=2;
-    // exact geometric/image stitching is covered in the renderer tests.
+    // Cairo changes curve edge coverage when the target extents change, so the
+    // two renderings differ in anti-aliasing only: 21 channels with delta <= 2 on
+    // Arch (FreeType 2.13), 42 channels with delta <= 8 on Ubuntu 24.04 with the
+    // same FreeType. Bound the share of differing channels and the per-channel
+    // delta instead of pinning absolute numbers that only hold on one font
+    // stack; a stitching or crop error moves whole pixels, which changes orders
+    // of magnitude more channels with far larger deltas, and exact geometric
+    // stitching is covered by the renderer tests.
+    let channels = rect.width as usize * rect.height as usize * 4;
     assert!(
-        differences.len() <= 32 && differences.iter().all(|v| v.2 <= 2),
-        "{} differing channels, max delta {}, first {:?}",
+        differences.len() * 100 <= channels && differences.iter().all(|v| v.2 <= 16),
+        "{} differing channels of {channels}, max delta {}, first {:?}",
         differences.len(),
         differences.iter().map(|v| v.2).max().unwrap_or(0),
         differences.first()
