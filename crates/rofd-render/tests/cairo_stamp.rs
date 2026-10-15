@@ -10,6 +10,13 @@ use zip::{write::SimpleFileOptions, ZipWriter};
 /// A 3x2 RGBA PNG with six distinct pixels.
 const PNG: &[u8] = include_bytes!("fixtures/images/asymmetric-rgba.png");
 
+/// A 6000x6000 16-bit RGBA PNG. Its finished RGBA8 raster is 137 MiB, well inside
+/// the default document limits (400 MiB decoded bytes, 100 M pixels), but the
+/// decoder holds the 274 MiB source buffer and the RGBA8 conversion at the same
+/// time, which the old single-budget accounting rejected ("Memory limit exceeded")
+/// before those limits were ever consulted - so the seal was silently dropped.
+const LARGE_PNG: &[u8] = include_bytes!("fixtures/images/seal-16bit-boundary.png");
+
 fn der(tag: u8, content: &[u8]) -> Vec<u8> {
     let mut out = vec![tag];
     if content.len() < 0x80 {
@@ -191,6 +198,29 @@ fn ofd_stamp_renders_the_mini_document_page() {
     // The page outside the stamp stays untouched.
     assert_eq!(pixel(&mut surface, 0, 0), [255, 255, 255, 255]);
     assert_eq!(pixel(&mut surface, 14, 8), [255, 255, 255, 255]);
+}
+
+#[test]
+fn a_large_seal_raster_within_the_document_limits_is_not_called_over_budget() {
+    // The stamp raster decode must not report a budget error for a picture that
+    // fits the document's decoded-image limits: the image crate's allocation
+    // budget covers its own intermediate buffers on top of the finished RGBA8
+    // raster, so budgeting it with the raster size alone rejects pictures that
+    // are well inside the limits. A broken picture still leaves the page blank
+    // (see the next test); this one distinguishes a decode failure from a budget
+    // failure by pixel colour.
+    let mut surface = render(
+        r#"<ofd:StampAnnot PageRef="10" ID="01" Boundary="2 2 6 4"/>"#,
+        "png",
+        LARGE_PNG,
+    );
+    let inside = pixel(&mut surface, 4, 4);
+    assert_eq!(inside[3], 255, "stamp pixel stayed transparent: {inside:?}");
+    assert_eq!(
+        (&inside[0], &inside[1], &inside[2]),
+        (&0x20, &0x40, &0x60),
+        "stamp pixel is not the fixture's colour: {inside:?}"
+    );
 }
 
 #[test]

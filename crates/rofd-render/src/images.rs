@@ -666,7 +666,14 @@ fn decode_pixels(
     let mut decoder_limits = Limits::default();
     decoder_limits.max_image_width = Some(width);
     decoder_limits.max_image_height = Some(height);
-    decoder_limits.max_alloc = Some(limits.max_decoded_image_bytes);
+    // `Limits::max_alloc` is a running budget for every allocation the decoder
+    // makes, its own intermediate buffers included, while
+    // `max_decoded_image_bytes` bounds the finished RGBA8 buffer, which
+    // `validate_dimensions` has already checked. Allow three times that budget: a
+    // decoder holds its own buffer (up to 8 bytes per pixel for 16-bit channels)
+    // and the RGBA8 conversion (4 bytes per pixel) at the same time, so an image
+    // that exactly fills the byte budget must still decode.
+    decoder_limits.max_alloc = Some(limits.max_decoded_image_bytes.saturating_mul(3));
     reader.limits(decoder_limits);
     let decoded = reader
         .decode()

@@ -32,3 +32,33 @@ b98b78b351b1511a0b9c5a953334bf2e801f3bf8c6922173d4590613bdb9f9a8  asymmetric-rgb
 86367e4786fe0911e54a3c7567e1cbd1f68557de199b1f72ffcf43b184c27982  asymmetric-rgb.gif
 e6b956ad3682993147602bda9ff31c4a6755ebf7cf5b4e0f9015069f240e93ec  asymmetric-rgb.tiff
 ```
+
+`seal-16bit-boundary.png` is a programmatically generated 6000 by 6000 16-bit
+RGBA test image, filled with the single opaque colour `#204060` at 16-bit
+precision (every 16-bit channel is the 8-bit value repeated). It contains no
+third-party artwork or other licensed material. It was generated with CPython
+3.14 in a few lines (a zero filter byte per row, `zlib.compress` at level 9, and
+`zlib.crc32` for the PNG chunks), with no image library involved:
+
+```text
+python3 - <<'EOF'
+import struct, zlib
+w = h = 6000
+raw = bytearray()
+for _ in range(h):
+    raw.append(0)
+    raw.extend(b'\x20\x20\x40\x40\x60\x60\xff\xff' * w)
+chunk = lambda t, d: struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+open('seal-16bit-boundary.png', 'wb').write(
+    b'\x89PNG\r\n\x1a\n'
+    + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 16, 6, 0, 0, 0))
+    + chunk(b'IDAT', zlib.compress(bytes(raw), 9))
+    + chunk(b'IEND', b''))
+EOF
+```
+
+SHA-256 checksums:
+
+```text
+264bfb51e016bb80c612db7dbab8d6070b91e5b4b4b0f8f7f8a2012842496c55  seal-16bit-boundary.png
+```
