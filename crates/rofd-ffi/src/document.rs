@@ -104,7 +104,13 @@ pub unsafe extern "C" fn rofd_document_open(
                 return Err(FfiError::invalid_argument("path is empty"));
             }
             let options = LoadOptionsInput::from_ffi(options)?;
-            let inner = rofd_core::Document::open(path, options).map_err(FfiError::from)?;
+            // Semantic text geometry resolves font metrics through the default font
+            // stack, so search/selection rectangles match the rendered glyphs (see
+            // `text_metrics_provider`).
+            let metrics: std::sync::Arc<dyn rofd_core::TextMetricsProvider> =
+                std::sync::Arc::new(crate::renderer::text_metrics_provider());
+            let inner = rofd_core::Document::open_with_metrics(path, options, Some(metrics))
+                .map_err(FfiError::from)?;
             Ok(Box::new(DocumentHandle { inner }))
         })
     }
