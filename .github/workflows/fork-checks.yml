@@ -60,7 +60,7 @@ jobs:
           matrix=$(printf '%s\n' $refs |
                      sed 's|^refs/heads/||' |
                      jq -R -s -c 'split("\n") | map(select(length > 0))
-                       | map({ref: ., strict: . == "dev"})')
+                       | map({ref: ., strict: (. == "dev")})')
           printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
           printf 'checking %s\n' "$matrix"
 
