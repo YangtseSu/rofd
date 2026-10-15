@@ -857,7 +857,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rofd"
-version = "0.4.0"
+version = "0.4.3-fork.2"
 dependencies = [
  "base64",
  "cairo-rs",
@@ -874,7 +874,7 @@ dependencies = [
 
 [[package]]
 name = "rofd-core"
-version = "0.4.0"
+version = "0.4.3-fork.2"
 dependencies = [
  "serde",
  "serde-xml-rs",
@@ -885,7 +885,7 @@ dependencies = [
 
 [[package]]
 name = "rofd-ffi"
-version = "0.4.0"
+version = "0.4.3-fork.2"
 dependencies = [
  "cairo-rs",
  "rofd-core",
@@ -895,7 +895,7 @@ dependencies = [
 
 [[package]]
 name = "rofd-render"
-version = "0.4.0"
+version = "0.4.3-fork.2"
 dependencies = [
  "cairo-rs",
  "fontdb",
