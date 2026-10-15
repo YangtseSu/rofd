@@ -1614,7 +1614,15 @@ fn decode_seal_raster(
             ))
         })?;
     let mut decoder_limits = Limits::default();
-    decoder_limits.max_alloc = Some(limits.max_decoded_image_bytes.min(max_raster_bytes));
+    // Two different budgets meet here. `max_decoded_image_bytes` and
+    // `max_raster_bytes` both bound the finished RGBA8 raster, which is only known
+    // after decoding, so the image crate's allocation budget (which also covers the
+    // decoder's own intermediate buffers) must be wider than the tighter of the two
+    // — the RGBA8 check below stays the authority. Three times the tighter budget:
+    // a decoder holds its own buffer (up to 8 bytes per pixel for 16-bit channels)
+    // and the RGBA8 conversion at the same time.
+    let raster_budget = limits.max_decoded_image_bytes.min(max_raster_bytes);
+    decoder_limits.max_alloc = Some(raster_budget.saturating_mul(3));
     reader.limits(decoder_limits);
     let decoded = reader.decode().map_err(|error| {
         invalid_display_list(format!("seal picture could not be decoded: {error}"))
