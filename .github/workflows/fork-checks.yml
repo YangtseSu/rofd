@@ -7,14 +7,13 @@
 # release branch must pass — the ones `debian/rules` builds, the crate test
 # suite, rustfmt, clippy and the C ABI runner.
 #
-# It lives on `dev` only. A push to `dev` runs it in **strict** mode: every
-# test gates, because `dev` is what ships, so it must be green on its own base.
-# A `feat/*` or `fix/*` branch is based on upstream `main`, where two tests are
-# red; those branches carry no copy of this file, so they are checked through
-# `workflow_dispatch` with an explicit `refs` list, in **loose** mode: the two
-# upstream-red tests run as visible, non-gating steps so a branch's own
-# regressions still fail the run, and the branch keeps a diff against upstream
-# that contains nothing but the change under review.
+# It lives on `dev` only, and every test gates: `dev` is what ships, so it must
+# be green on its own base, and upstream `main` is green too, because the two
+# tests that used to be red there (fixed by upstream PRs #14 and #15) are merged.
+# A `feat/*` or `fix/*` branch carries no copy of this file, so it is checked
+# through `workflow_dispatch` with an explicit `refs` list — the same checks —
+# and the branch keeps a diff against upstream that contains nothing but the
+# change under review.
 name: fork checks
 
 on:
@@ -55,12 +54,11 @@ jobs:
                      awk '$2 ~ /^refs\/heads\/(feat|fix)\// || $2 == "refs/heads/dev" { print $2 }' |
                      sort)
           fi
-          # `dev` is what ships, so a ref that names it is checked strictly:
-          # nothing may be skipped or tolerated there.
+          # Every ref is checked the same way: nothing is skipped or tolerated.
           matrix=$(printf '%s\n' $refs |
                      sed 's|^refs/heads/||' |
                      jq -R -s -c 'split("\n") | map(select(length > 0))
-                       | map({ref: ., strict: (. == "dev")})')
+                       | map({ref: .})')
           printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
           printf 'checking %s\n' "$matrix"
 
@@ -95,31 +93,7 @@ jobs:
       - name: clippy
         run: cargo clippy --offline -p rofd-core -p rofd-render -p rofd-ffi --all-targets -- -D warnings
       - name: crate tests
-        run: |
-          # `dev` carries the fixes that make both of these green, so nothing is
-          # skipped there. On `feat/*` / `fix/*`, which sit on upstream `main`
-          # where #14 and #15 are unmerged, they run in their own visible,
-          # non-gating steps below instead, so the branch's own regressions still
-          # gate. Drop the loose half once #14 and #15 are upstream.
-          if [ '${{ matrix.entry.strict }}' = true ]; then
-            cargo test --offline -p rofd-core -p rofd-render -p rofd-ffi
-          else
-            cargo test --offline -p rofd-core -p rofd-render -p rofd-ffi \
-              -- --skip real_fixture_region_matches_full_page_and_preserves_cairo_ownership \
-                 --skip decoded_limits_have_exact_and_one_over_boundaries
-          fi
-      - name: 'upstream-red: decoded image limit boundary (fixed by PR #14)'
-        if: ${{ !matrix.entry.strict }}
-        continue-on-error: true
-        run: |
-          cargo test --offline -p rofd-render --test images \
-            decoded_limits_have_exact_and_one_over_boundaries
-      - name: 'upstream-red: region pixel diff on this font stack (fixed by PR #15)'
-        if: ${{ !matrix.entry.strict }}
-        continue-on-error: true
-        run: |
-          cargo test --offline -p rofd-ffi --test region \
-            real_fixture_region_matches_full_page_and_preserves_cairo_ownership
+        run: cargo test --offline -p rofd-core -p rofd-render -p rofd-ffi
       - name: distribution build (what debian/rules runs)
         run: cargo build --release --offline --locked -p rofd-ffi -p rofd --features rofd/qt-reader
       - name: C ABI symbols, header and smoke tests

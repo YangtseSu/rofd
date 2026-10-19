@@ -70,16 +70,16 @@ overridden:
 Builder gates every job behind `if: false` and needs a linuxdeepin member, so
 without this workflow nothing would ever be checked.
 
-- A push to `dev` runs all of it strictly: `cargo fmt --check`, clippy with
+- A push to `dev` runs all of it: `cargo fmt --check`, clippy with
   `-D warnings`, the three crates' tests, the `debian/rules` build command, and
-  `crates/rofd-ffi/tests/run_c_tests.sh`.
-- Two tests are red on upstream `main` (`decoded_limits_have_exact_and_one_over_boundaries`,
-  fixed by PR #14, and the region pixel diff, fixed by PR #15). `dev` carries the
-  fixes, so they gate here. `feat/*` / `fix/*` branches are checked on demand:
+  `crates/rofd-ffi/tests/run_c_tests.sh`. Nothing is skipped and no step is
+  tolerated, on any ref.
+- `feat/*` / `fix/*` branches carry no copy of this workflow, so they are
+  checked on demand — the same checks, on the branch:
 
   ```bash
   gh workflow run fork-checks.yml --ref dev -f refs=refs/heads/feat/<name>
   ```
 
-  and then run in the loose mode that keeps those two tests visible but
-  non-gating, so the branch's own regressions still fail the run.
+  A dispatch with no `refs` checks the branch it runs on plus every `feat/*`,
+  `fix/*` and `dev`.
