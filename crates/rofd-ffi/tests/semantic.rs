@@ -1184,7 +1184,8 @@ fn text_layout_rectangles_cover_the_rendered_ink_below_the_baseline() {
             "right {box_right} vs {ink_right}"
         );
 
-        // A line selection over the same text spans that band.
+        // A line selection over the same text is that band grown by an eighth of its
+        // height on both sides, the margin a PDF selection region has.
         let area = rofd_rect_t {
             x_mm: 0.0,
             y_mm: 0.0,
@@ -1204,11 +1205,13 @@ fn text_layout_rectangles_cover_the_rendered_ink_below_the_baseline() {
         );
         assert_eq!(selection_region_count(selection), 1);
         let region = selection_region(selection, 0);
+        let margin = a.height_mm / 8.0;
         assert!(
-            (region.y_mm - a.y_mm).abs() < 1e-3,
-            "region {region:?} vs band {a:?}"
+            (region.y_mm - (a.y_mm - margin)).abs() < 1e-3,
+            "region {region:?} vs band {:?} + margin {margin}",
+            a
         );
-        assert!((region.height_mm - a.height_mm).abs() < 1e-3);
+        assert!((region.height_mm - (a.height_mm + 2.0 * margin)).abs() < 1e-3);
         rofd_text_selection_free(selection);
 
         rofd_render_report_free(report);

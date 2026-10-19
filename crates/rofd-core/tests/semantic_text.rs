@@ -220,9 +220,11 @@ fn area_extraction_and_glyph_selection_require_positive_intersection() {
     assert_eq!(text.text_for_area(area).unwrap(), "bf");
     let selection = text.select(area, SelectionStyle::Glyph).unwrap();
     assert_eq!(selection.text(), "bf");
+    // Each region is the line band grown by an eighth of its height on both sides,
+    // the margin a PDF selection region has.
     assert_eq!(
         selection.regions(),
-        &[rect(5.0, 1.0, 4.0, 4.0), rect(5.0, 11.0, 4.0, 4.0)]
+        &[rect(5.0, 0.5, 4.0, 5.0), rect(5.0, 10.5, 4.0, 5.0)]
     );
     assert_eq!(text.text_for_area(rect(8.9, 2.0, 0.2, 1.0)).unwrap(), "b_");
     assert_eq!(text.text_for_area(rect(1.0, 5.0, 4.0, 1.0)).unwrap(), "");
@@ -236,7 +238,7 @@ fn word_selection_expands_unicode_words_without_crossing_punctuation_or_space() 
         .select(rect(6.0, 2.0, 8.0, 1.0), SelectionStyle::Word)
         .unwrap();
     assert_eq!(selection.text(), "ab_中");
-    assert_eq!(selection.regions(), &[rect(1.0, 1.0, 16.0, 4.0)]);
+    assert_eq!(selection.regions(), &[rect(1.0, 0.5, 16.0, 5.0)]);
     assert_eq!(
         text.select(rect(18.0, 2.0, 1.0, 1.0), SelectionStyle::Word)
             .unwrap()
@@ -265,14 +267,14 @@ fn line_selection_preserves_internal_synthesized_newlines_and_region_order() {
         .select(rect(6.0, 2.0, 1.0, 1.0), SelectionStyle::Line)
         .unwrap();
     assert_eq!(one.text(), "ab_中, cd");
-    assert_eq!(one.regions(), &[rect(1.0, 1.0, 32.0, 4.0)]);
+    assert_eq!(one.regions(), &[rect(1.0, 0.5, 32.0, 5.0)]);
     let both = text
         .select(rect(6.0, 2.0, 1.0, 12.0), SelectionStyle::Line)
         .unwrap();
     assert_eq!(both.text(), "ab_中, cd\nef gh");
     assert_eq!(
         both.regions(),
-        &[rect(1.0, 1.0, 32.0, 4.0), rect(1.0, 11.0, 20.0, 4.0)]
+        &[rect(1.0, 0.5, 32.0, 5.0), rect(1.0, 10.5, 20.0, 5.0)]
     );
 }
 
@@ -286,14 +288,15 @@ fn selection_preserves_canonical_order_when_geometry_runs_backwards() {
     assert_eq!(text.text_for_area(area).unwrap(), "abc");
     let selection = text.select(area, SelectionStyle::Glyph).unwrap();
     assert_eq!(selection.text(), "abc");
-    assert_eq!(selection.regions(), &[rect(1.0, 1.0, 12.0, 4.0)]);
+    assert_eq!(selection.regions(), &[rect(1.0, 0.5, 12.0, 5.0)]);
 }
 
-/// The band of one face is what a selection region spans: it clears the glyphs the way
-/// a PDF text box does. The band itself comes from the metrics of one face, so its top
-/// and bottom do not depend on which scalars happen to have the tallest ink.
+/// A selection region is the line band grown by an eighth of its height on both sides:
+/// the highlight clears the glyphs the way a PDF reader's does. The band itself comes
+/// from the metrics of one face, so its top and bottom do not depend on which scalars
+/// happen to have the tallest ink.
 #[test]
-fn selection_regions_span_the_aligned_band_of_one_face() {
+fn selection_regions_carry_the_pdf_highlight_margin_on_an_aligned_band() {
     let page = page_with_text(
         r#"<ofd:TextObject ID="2" Boundary="0 0 100 8" Font="10" Size="4"><ofd:TextCode X="1" Y="5">A中, 。</ofd:TextCode></ofd:TextObject>"#,
     );
@@ -324,8 +327,9 @@ fn selection_regions_span_the_aligned_band_of_one_face() {
         .unwrap();
     assert_eq!(selection.text(), "A中, 。");
     let region = selection.regions()[0];
-    assert!((region.y - top).abs() < 1e-9, "{region:?}");
-    assert!((region.height - (bottom - top)).abs() < 1e-9);
+    let margin = (bottom - top) / 8.0;
+    assert!((region.y - (top - margin)).abs() < 1e-9, "{region:?}");
+    assert!((region.height - (bottom - top + 2.0 * margin)).abs() < 1e-9);
 }
 
 #[test]

@@ -109,7 +109,8 @@ impl TextSelection {
         &self.text
     }
 
-    /// Returns one union of selected visible boxes per participating logical line.
+    /// Returns one union of selected visible boxes per participating logical line,
+    /// each grown by the highlight margin a PDF selection region has.
     pub fn regions(&self) -> &[Rect] {
         &self.regions
     }
@@ -358,7 +359,9 @@ impl PageText {
     /// Glyph and word selections emit selected source scalars without synthesized
     /// separators. Line selections retain a synthesized newline only when both
     /// adjacent lines are selected. Regions are ordered by canonical text, with
-    /// one union per selected logical line, never across synthesized separators.
+    /// one union per selected logical line, never across synthesized separators. Each
+    /// union carries the highlight margin a PDF reader's selection region has: it is
+    /// grown by an eighth of its height above and below.
     pub fn select(&self, area: Rect, style: SelectionStyle) -> Result<TextSelection> {
         validate_area(area)?;
         let mut selected = self
@@ -388,7 +391,7 @@ impl PageText {
         for (index, character) in self.characters.iter().enumerate() {
             if self.is_separator(index) {
                 if let Some(rect) = region.take() {
-                    selection.regions.push(rect);
+                    selection.regions.push(selection_region(rect)?);
                 }
                 if style == SelectionStyle::Line
                     && index.checked_sub(1).is_some_and(|before| selected[before])
@@ -409,7 +412,7 @@ impl PageText {
             }
         }
         if let Some(rect) = region {
-            selection.regions.push(rect);
+            selection.regions.push(selection_region(rect)?);
         }
         Ok(selection)
     }
@@ -427,6 +430,23 @@ impl PageText {
             .flags
             .contains(TextCharFlags::SYNTHESIZED_SEPARATOR)
     }
+}
+
+/// Returns the rectangle a selection highlight paints for one selected line.
+///
+/// A PDF reader grows the line band by an eighth of its height above and below
+/// (poppler's `TextSelectionSizer::visitLine`: `margin = (yMax - yMin) / 8`), which is
+/// what makes a selected line read as one band that clears the glyphs instead of
+/// ending on them. Selection regions mirror that growth; character boxes and match
+/// rectangles stay the plain band.
+fn selection_region(rect: Rect) -> Result<Rect> {
+    let margin = rect.height / 8.0;
+    Ok(Rect {
+        x: rect.x,
+        y: finite_add(rect.y, -margin)?,
+        width: rect.width,
+        height: finite_add(rect.height, 2.0 * margin)?,
+    })
 }
 
 fn expand_selected_group(selected: &mut [bool]) {
